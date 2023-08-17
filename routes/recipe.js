@@ -1,48 +1,76 @@
 import express, { request } from "express";
 import {prisma} from "../db/index.js";
 
+export default function recipeRouter(passport){
 const router = express.Router(); //build a router to append to server
-export default function recipeRouter(){
+
     //GET /recipe
-    router.get("/", async (req, res) =>{
+    router.get("/", async (_request, response) =>{
       const recipes = await prisma.recipe.findMany();
     
       if (recipes.length >= 1){
-        res.status(200).json({
+        response.status(200).json({
           success: true,
           recipes
         })
       } else {
-        res.status(200)({
+        response.status(200)({
           success: true,
           message: "no recipes found"
         })
       }
     })
+
+     //Get All Recipes
+  router.get("/", async (request, response) => {
+    try {
+      const recipes = await prisma.recipe.findMany({
+        orderBy: {
+          userId: "asc"
+        },
+        include: {
+          user: true
+        }
+      });
+
+      if (recipes) {
+        response.status(200).json({
+          success: true,
+          recipes
+        });
+      };
+    } catch (e) {
+      response.status(500).json({
+        success: false,
+        message: "Could not find recipes"
+      });
+    };
+  });
     
     //POST /recipe
-    router.post("/", async (req, res)=>{
+    router.post("/", passport.authenticate("jwt", { session: false}),
+    async (request, response)=>{
       try{
         const newRecipe = await prisma.recipe.create({
           data: {
-            name: req.body.name,
-            description: req.body.description,
+            name: request.body.name,
+            description: request.body.description,
             userId: 1 //static id for now
           }
         });
         if (newRecipe){
-          res.status(201).json({
+          response.status(201).json({
             success: true,
             message: "Created a new recipe"
           })
         } else {
-          res.status(500).json({
+          response.status(500).json({
             success: false,
             message: "failed to create a recipe"
           })
         }
       } catch(e){
-          res.status(500).json({
+          response.status(500).json({
             success: false,
             message: "failed to create a recipe",
           });
@@ -50,8 +78,11 @@ export default function recipeRouter(){
     })
     
     //GET 1 by id /recipe/123 
-    router.get("/:recipeId", async (req, res)=>{
-      const recipeId = req.params.recipeId;
+    router.get("/:recipeId", async (request, response, next)=>{
+      const recipeId = request.params.recipeId;
+      if(recipeId === "user") {
+        next('route');
+      } else {
     
       try {
         const foundRecipe = await prisma.recipe.findFirstOrThrow({
@@ -59,77 +90,137 @@ export default function recipeRouter(){
             id: parseInt(recipeId)
           }
         });
-    
-        res.status(200).json({
-          success: true,
-          recipe: foundRecipe
-        })
+         if (foundRecipe) {
+
+          response.status(200).json({
+            success: true,
+            recipe: foundRecipe
+          })
+         };
+        
       } catch(e){
-        res.status(404).json({
+        response.status(404).json({
           success: false,
           message: "Could not find the recipe"
-        })
-      }
+        });
+      };
+    }
       
-    })
-    router.put("/:recipeId", async (req, res) =>{
-        const recipeId = req.params.recipeId;
+    });
+
+    //GET all recipes for the currently logged in user
+    router.get(
+      "/user",
+      passport.authenticate("jwt", { session: false }),
+      async (request, response) => {
+          try {
+              const recipes = await prisma.recipe.findMany({
+                  where: {
+                      userId: request.user.id
+                  }
+              });
+
+              if (recipes) {
+                  response.status(200).json({
+                      success: true,
+                      recipes
+                  });
+              };
+          } catch (e) {
+              response.status(500).json({
+                  success: false,
+                  message: "You must be logged in!"
+              });
+          };
+      });
+
+    //EDIT/recipe
+    router.put("/:recipeId", passport.authenticate("jwt", {session: false}),
+     async (request, response) =>{
+        const recipeId = request.params.recipeId;
 
         try{
             const editRecipe = await prisma.recipe.updateMany( {
                 where: {
-                    id: parseInt(recipeId)
+                    id: parseInt(recipeId),
+                    userId: request.user.id
                 },
-                data: {
-                    name: req.body.name,
-                    description: req.body.description
-                }
-            })
-            res.status(200).json({
-                success: true,
-                recipe: editRecipe
-              })
+              });
+              
+              if (editRecipe) {
+                const updatedRecipe = await prisma.recipe.update({
+                    where: {
+                        id: parseInt(recipeId)
+                    },
+                    data: {
+                        name: request.body.name,
+                        description: request.body.description
+                    }
+                });
 
+                if (updatedRecipe) {
+                    response.status(200).json({
+                        success: true
+                    });
+                } else {
+                    response.status(500).json({
+                        success: false,
+                        message: "Failed to update recipe"
+                    });
+                };
+            };
+        } catch (e) {
+            response.status(500).json({
+                success: false,
+                message: "Could not find recipe"
+            });
+        };
+    });
    
-          }
         
-        catch(e){
-            res.status(404).json({
-              success: false,
-              message: "Could not edit the recipe"
-            })
-          }
-
-    } )
-
-    router.delete("/:recipeId", async (req, res) =>{
-        const recipeId = req.params.recipeId;
+        
+    //DELETE/recipe
+    router.delete("/:recipeId", passport.authenticate("jwt", {session: false}),
+    async (request, response) =>{
+        const recipeId = request.params.recipeId;
 
         try{
             const deleteRecipe = await prisma.recipe.delete( {
                 where: {
-                    id: parseInt(recipeId)
-                },
-                data: {
-                    name: req.body.name,
-                    description: req.body.description
+                    id: parseInt(recipeId),
+                    userId: request.user.id
                 }
-            })
-            res.status(200).json({
-                success: true,
-                recipe: editRecipe
-              })
+              });
+              if (deleteRecipe) {
+                const deleteRec = await prisma.recipe.delete({
+                    where: {
+                        id: parseInt(id)
+                    }
+                });
 
-   
-          }
-        
-        catch(e){
-            res.status(404).json({
-              success: false,
-              message: "Could not delete the recipe"
-            })
-          }
-
-    } )
+                if (deleteRec) {
+                    response.status(200).json({
+                        success: true
+                    });
+                } else {
+                    response.status(500).json({
+                        success: false,
+                        message: "Failed to delete recipe"
+                    });
+                };
+            } else {
+                response.status(500).json({
+                    success: false,
+                    message: "Something went wrong"
+                });
+            };
+        } catch (e) {
+            response.status(500).json({
+                success: false,
+                message: "Could not find recipe"
+            });
+        };
+    });
+               
     return router
-    }
+    };
